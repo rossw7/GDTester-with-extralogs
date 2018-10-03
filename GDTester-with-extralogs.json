@@ -11,7 +11,7 @@
         "MetricTransformations": [
           {
             "MetricName": "SSHCommandCount",
-            "MetricValue": 1,
+            "MetricValue": "1",
             "MetricNamespace": {
               "Fn::Join": [
                 "/",
@@ -59,8 +59,8 @@
           "Ref": "VPCCIDR"
         },
         "InstanceTenancy": "default",
-        "EnableDnsSupport": "true",
-        "EnableDnsHostnames": "true",
+        "EnableDnsSupport": true,
+        "EnableDnsHostnames": true,
         "Tags": [
           {
             "Key": "Name",
@@ -225,9 +225,9 @@
                 "Ref": "NATInstanceSecurityGroup"
               }
             ],
-            "AssociatePublicIpAddress": "true",
+            "AssociatePublicIpAddress": true,
             "DeviceIndex": "0",
-            "DeleteOnTermination": "true",
+            "DeleteOnTermination": true,
             "SubnetId": {
               "Ref": "PublicSubnet"
             }
@@ -244,7 +244,7 @@
             }
           ]
         },
-        "SourceDestCheck": "false"
+        "SourceDestCheck": false
       }
     },
     "EIP": {
@@ -359,10 +359,6 @@
       }
     },
     "RedTeam": {
-      "DependsOn": [
-        "BasicLinuxTarget",
-        "BasicWindowsTarget"
-      ],
       "Type": "AWS::EC2::Instance",
       "Properties": {
         "KeyName": {
@@ -491,10 +487,6 @@
       }
     },
     "VulnWebServer": {
-      "DependsOn": [
-        "BasicLinuxTarget",
-        "BasicWindowsTarget"
-      ],
       "Type": "AWS::EC2::Instance",
       "Properties": {
         "KeyName": {
@@ -679,9 +671,9 @@
                 "Ref": "BasicWindowsSecurityGroup"
               }
             ],
-            "AssociatePublicIpAddress": "false",
+            "AssociatePublicIpAddress": false,
             "DeviceIndex": "0",
-            "DeleteOnTermination": "true",
+            "DeleteOnTermination": true,
             "SubnetId": {
               "Ref": "PrivateSubnet"
             }
@@ -719,7 +711,7 @@
         ]
       }
     },
-    "FlowLogs": {
+    "CloudWatchLogGroupFlowLogs": {
       "Type": "AWS::Logs::LogGroup",
       "Properties": {
         "RetentionInDays": {
@@ -731,7 +723,7 @@
         }
       }
     },
-    "LogStream": {
+    "VPCFlowLogStream": {
       "Type": "AWS::Kinesis::Stream",
       "Properties": {
         "ShardCount": {
@@ -970,16 +962,34 @@
         "RetentionInDays": 7
       }
     },
-    "CloudTrailCreateTrail": {
-      "DependsOn": [
-        "S3BucketPolicyCloudTrail"
-      ],
-      "Type": "AWS::CloudTrail::Trail",
+    "CloudWatchLogGroupCloudTrail": {
+      "Type": "AWS::Logs::LogGroup",
       "Properties": {
+        "RetentionInDays": 7
+      }
+    },
+    "CloudTrailCreateTrail": {
+      "Type": "AWS::CloudTrail::Trail",
+      "DependsOn" : ["S3BucketPolicyCloudTrail"],
+      "Properties": {
+        "CloudWatchLogsLogGroupArn" : {
+          "Fn::GetAtt": [
+            "CloudWatchLogGroupCloudTrail",
+            "Arn"
+          ]
+        },
+        "CloudWatchLogsRoleArn" : {  
+          "Fn::GetAtt": [
+          "FlowLogsToCloudWatchIAMRole",
+          "Arn"
+        ]
+      },
         "S3BucketName": {
           "Ref": "S3BucketCloudTrail"
         },
-        "IsLogging": true
+        "IsLogging": true,
+        "IncludeGlobalServiceEvents" : true,
+        "IsMultiRegionTrail" : true
       }
     },
     "FirehoseDeliveryPolicyGuardDuty": {
@@ -1031,53 +1041,59 @@
                 "s3:ListBucketMultipartUploads",
                 "s3:PutObject"
               ],
-              "Resource": ["arn:aws:s3:::S3BucketCloudTrail",
+              "Resource": 
+                    [
+                      "arn:aws:s3:::S3BucketCloudTrail",
                       "arn:aws:s3:::S3BucketCloudTrail/*"
-              ]
-            },
-            {
-              "Effect": "Allow",
-              "Action": [
-                "es:DescribeElasticsearchDomain",
-                "es:DescribeElasticsearchDomains",
-                "es:DescribeElasticsearchDomainConfig",
-                "es:ESHttpPost",
-                "es:ESHttpPut"
-              ],
-              "Resource": [
-                      "arn:aws:es:$(AWS::Region):$(AWS:AccountId):domain/ESDomainName",
-                      "arn:aws:es:$(AWS::Region):$(AWS::AccountId):domain/ESDomainName/*"
                     ]
             },
             {
               "Effect": "Allow",
-              "Action": [
-                "es:ESHttpGet"
-              ],
-              "Resource": [
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/_all/_settings",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/_cluster/stats",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/_nodes",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/_nodes/stats",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/_nodes/*/stats",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/_stats",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/IndexName*/_stats",
-                "arn:aws:es:AWS::Region:AWS::AccountId:domain/ESDomainName/IndexName*/_mapping/log"
-                    ]
-                },
+              "Action": ["log:PutLogEvents"],
+              "Resource": "*"
+            },
+            {
+            "Effect": "Allow",
+            "Action": [
+              "es:DescribeElasticsearchDomain",
+              "es:DescribeElasticsearchDomains",
+              "es:DescribeElasticsearchDomainConfig",
+              "es:ESHttpPost",
+              "es:ESHttpPut"
+            ],
+            "Resource": [
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/*",{ "Domain": {"Ref" : "ESDomainName" }} ]}
+             ]
+            },
             {
               "Effect": "Allow",
               "Action": [
-                "log:PutLogEvents"
+                "lambda:InvokeFunction",
+                "lambda:GetFunctionConfiguration"
               ],
-              "Resource": [
-                "arn:aws:es:AWS::Region:AWS::AccountId:log-group:/aws/kinesisfirehose/ESDomainName:log-stream:ESDomainName",
-                "arn:aws:logs:AWS::Region:AWS::AccountId"
-                    ]
-
+            "Resource": [
+                {"Fn::Sub" : "arn:aws:lambda:${AWS::Region}:${AWS::AccountId}:function:%FIREHOSE_DEFAULT_FUNCTION%:%FIREHOSE_DEFAULT_VERSION%"}
+                  ]
+            },
+            {
+            "Effect": "Allow",
+            "Action": [
+              "es:ESHttpGet"
+            ],
+            "Resource": [
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/_all/_settings",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/_cluster/stats",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/_nodes",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/_nodes/stats",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/_nodes/*/stats",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/_stats",{ "Domain": {"Ref" : "ESDomainName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/${ESIndex}*/_stats",{ "Domain": {"Ref" : "ESDomainName" },"ESIndex": {"Ref" : "IndexName" }} ]},
+              {"Fn::Sub" : ["arn:aws:es:${AWS::Region}:${AWS::AccountId}:domain/${Domain}/${ESIndex}*/_mapping/log",{ "Domain": {"Ref" : "ESDomainName" },"ESIndex": {"Ref" : "IndexName" }} ]}
+                  ]
             }
-            ]
-        },
+        ]
+      },
         "Roles": [
           {
             "Ref": "FirehoseDeliveryRoleALL"
@@ -1251,7 +1267,7 @@
               "Sid": "",
               "Effect": "Allow",
               "Principal": {
-                "Service": "firehose.amazonaws.com"
+                "Service": ["firehose.amazonaws.com", "es.amazonaws.com"]
               },
               "Action": "sts:AssumeRole",
               "Condition": {
@@ -1263,19 +1279,32 @@
               }
             }
           ]
+        },
+        "Policies": [ {
+          "PolicyName": "AllowElasticSearch",
+          "PolicyDocument": { 
+            "Version" : "2012-10-17",
+            "Statement": [ {  
+              "Effect": "Allow",
+              "Resource": "*",
+              "Action": "es:*"
+            }
+          ]
         }
       }
+     ]
+    }
     },
     "CloudWatchEventRuleGuardduty": {
-      "DependsOn": [
-        "CloudWatchEventInvokeKinesisTargetRole"
-      ],
       "Type": "AWS::Events::Rule",
       "Properties": {
         "Description": "Events Rule with KinesisParameters",
         "EventPattern": {
           "source": [
             "aws.guardduty"
+          ],
+          "detail-type": [
+            "GuardDuty Finding"
           ]
         },
         "RoleArn": {
@@ -1287,7 +1316,7 @@
         "State": "ENABLED",
         "Targets": [
           {
-            "Id": "Id123",
+            "Id": "GuardDuty-Firehose",
             "Arn": {
               "Fn::GetAtt": [
                 "FirehoseDeliveryStreamGuardDuty",
@@ -1305,16 +1334,21 @@
       }
     },
     "CloudWatchEventRuleCloudTrail": {
-      "DependsOn": [
-        "CloudWatchEventInvokeKinesisTargetRole"
-      ],
       "Type": "AWS::Events::Rule",
       "Properties": {
         "Description": "Events Rule with KinesisParameters",
         "EventPattern": {
           "source": [
             "aws.cloudtrail"
-          ]
+          ],
+          "detail-type": [
+            "AWS API Call via CloudTrail"
+          ],
+          "detail": {
+            "eventSource": [
+              "cloudtrail.amazonaws.com"
+            ]
+          }
         },
         "RoleArn": {
           "Fn::GetAtt": [
@@ -1325,7 +1359,7 @@
         "State": "ENABLED",
         "Targets": [
           {
-            "Id": "Id123",
+            "Id": "CloudTrail-Firehose",
             "Arn": {
               "Fn::GetAtt": [
                 "FirehoseDeliveryStreamCloudTrail",
@@ -1343,9 +1377,6 @@
       }
     },
     "CloudWatchEventRuleIAM": {
-      "DependsOn": [
-        "CloudWatchEventInvokeKinesisTargetRole"
-      ],
       "Type": "AWS::Events::Rule",
       "Properties": {
         "Description": "Events Rule with KinesisParameters",
@@ -1381,9 +1412,6 @@
       }
     },
     "CloudWatchEventRuleMacie": {
-      "DependsOn": [
-        "CloudWatchEventInvokeKinesisTargetRole"
-      ],
       "Type": "AWS::Events::Rule",
       "Properties": {
         "Description": "Events Rule with KinesisParameters",
@@ -1419,9 +1447,6 @@
       }
     },
     "CloudWatchEventRuleInspector": {
-      "DependsOn": [
-        "CloudWatchEventInvokeKinesisTargetRole"
-      ],
       "Type": "AWS::Events::Rule",
       "Properties": {
         "Description": "Events Rule with KinesisParameters",
@@ -1631,7 +1656,7 @@
           {
             "Key": "Name",
             "Value": "LinuxBastion",
-            "PropagateAtLaunch": "true"
+            "PropagateAtLaunch": true
           }
         ]
       },
@@ -1810,9 +1835,6 @@
       }
     },
     "FirehoseDeliveryStreamGuardDuty": {
-      "DependsOn": [
-        "FirehoseDeliveryPolicyGuardDuty"
-      ],
       "Type": "AWS::KinesisFirehose::DeliveryStream",
       "Properties": {
         "ExtendedS3DestinationConfiguration": {
@@ -1828,7 +1850,7 @@
             ]
           },
           "BufferingHints": {
-            "IntervalInSeconds": "300",
+            "IntervalInSeconds": 300,
             "SizeInMBs": "5"
           },
           "CompressionFormat": "UNCOMPRESSED",
@@ -1840,51 +1862,70 @@
             ]
           },
           "ProcessingConfiguration": {
-            "Enabled": "false"
+            "Enabled": false
           }
         }
       }
     },
     "FirehoseDeliveryStreamCloudTrail": {
-      "DependsOn": [
-        "FirehoseDeliveryPolicyCloudTrail"
-      ],
       "Type": "AWS::KinesisFirehose::DeliveryStream",
       "Properties": {
-        "ExtendedS3DestinationConfiguration": {
-          "BucketARN": {
-            "Fn::Join": [
-              "",
-              [
-                "arn:aws:s3:::",
-                {
-                  "Ref": "S3BucketCloudTrail"
-                }
-              ]
-            ]
+        "ElasticsearchDestinationConfiguration": {
+          "TypeName": "log",
+          "CloudWatchLoggingOptions": {
+            "Enabled": true,
+            "LogGroupName": "deliverystream",
+            "LogStreamName": "elasticsearchDelivery"
           },
           "BufferingHints": {
-            "IntervalInSeconds": "300",
-            "SizeInMBs": "5"
+            "IntervalInSeconds": 60,
+            "SizeInMBs": 50
           },
-          "CompressionFormat": "UNCOMPRESSED",
-          "Prefix": "firehose/",
+          "DomainARN": "arn:aws:es:us-east-1:176188753941:domain/guard-duty-findings",
+          "IndexName": { "Ref" : "IndexName" },
+          "IndexRotationPeriod": "OneHour",
+          "RetryOptions": {
+            "DurationInSeconds": "60"
+          },
           "RoleARN": {
             "Fn::GetAtt": [
               "FirehoseDeliveryRoleALL",
               "Arn"
             ]
           },
-          "ProcessingConfiguration": {
-            "Enabled": "false"
+          "S3BackupMode": "AllDocuments",
+          "S3Configuration": {
+            "BucketARN": { "Fn::GetAtt" : ["S3BucketCloudTrail", "Arn"] },
+            "BufferingHints": {
+              "IntervalInSeconds": "60",
+              "SizeInMBs": "50"
+            },
+            "CompressionFormat": "UNCOMPRESSED",
+            "Prefix": {
+              "Fn::Join": [
+              "",
+              [
+                "AWS::Region",
+                "/"
+              ]
+            ]
+            },
+            "RoleARN": {
+              "Fn::GetAtt": [
+                "FirehoseDeliveryRoleALL",
+                "Arn"
+              ]
+            },
+            "CloudWatchLoggingOptions": {
+              "Enabled": true,
+              "LogGroupName": "deliverystream",
+              "LogStreamName": "s3Backup"
+            }
           }
         }
       }
     },
     "FirehoseDeliveryStreamIAM": {
-      "DependsOn": [
-        "FirehoseDeliveryPolicyIAM"
-      ],
       "Type": "AWS::KinesisFirehose::DeliveryStream",
       "Properties": {
         "ExtendedS3DestinationConfiguration": {
@@ -1912,15 +1953,12 @@
             ]
           },
           "ProcessingConfiguration": {
-            "Enabled": "false"
+            "Enabled": false
           }
         }
       }
     },
     "FirehoseDeliveryStreamInspector": {
-      "DependsOn": [
-        "FirehoseDeliveryPolicyInspector"
-      ],
       "Type": "AWS::KinesisFirehose::DeliveryStream",
       "Properties": {
         "ExtendedS3DestinationConfiguration": {
@@ -1948,15 +1986,12 @@
             ]
           },
           "ProcessingConfiguration": {
-            "Enabled": "false"
+            "Enabled": false
           }
         }
       }
     },
     "FirehoseDeliveryStreamMacie": {
-      "DependsOn": [
-        "FirehoseDeliveryPolicyGuardDuty"
-      ],
       "Type": "AWS::KinesisFirehose::DeliveryStream",
       "Properties": {
         "ExtendedS3DestinationConfiguration": {
@@ -1984,15 +2019,10 @@
             ]
           },
           "ProcessingConfiguration": {
-            "Enabled": "false"
+            "Enabled": false
           }
         }
       }
-    },
-    "S3BucketCreateCloudTrail": {
-      "DeletionPolicy": "Retain",
-      "Type": "AWS::S3::Bucket",
-      "Properties": {}
     },
     "RedTeamInstanceProfile": {
       "Type": "AWS::IAM::InstanceProfile",
@@ -2318,7 +2348,7 @@
               "Resource": [
                 {
                   "Fn::GetAtt": [
-                    "LogStream",
+                    "VPCFlowLogStream",
                     "Arn"
                   ]
                 }
@@ -2402,7 +2432,7 @@
               "Resource": [
                 {
                   "Fn::GetAtt": [
-                    "LogStream",
+                    "VPCFlowLogStream",
                     "Arn"
                   ]
                 }
@@ -2429,8 +2459,26 @@
               ]
             }
           ]
+        },
+        "Policies": [ {
+          "PolicyName": "AllowKinesis",
+          "PolicyDocument": { 
+            "Version" : "2012-10-17",
+            "Statement": [ {  
+              "Effect": "Allow",
+              "Resource": "*",
+              "Action": [
+                "kinesis:GetRecords",
+                "kinesis:GetShardIterator",
+                "kinesis:DescribeStream",
+                "kinesis:ListStreams"
+              ]
+            }
+          ]
         }
       }
+     ]
+    }
     },
     "PrivateSubnetRoute": {
       "Type": "AWS::EC2::Route",
@@ -2564,10 +2612,10 @@
             "BatchSize"
           ]
         },
-        "Enabled": "True",
+        "Enabled": true,
         "EventSourceArn": {
           "Fn::GetAtt": [
-            "LogStream",
+            "VPCFlowLogStream",
             "Arn"
           ]
         },
@@ -2587,7 +2635,7 @@
           ]
         },
         "LogGroupName": {
-          "Ref": "FlowLogs"
+          "Ref": "CloudWatchLogGroupFlowLogs"
         },
         "ResourceId": {
           "Ref": "VPC"
@@ -2597,15 +2645,11 @@
       }
     },
     "VPCFlowLogFilter": {
-      "DependsOn": [
-        "CloudWatchToKinesisIAMPolicy",
-        "VPCLambdaFlowLogUpload"
-      ],
       "Type": "AWS::Logs::SubscriptionFilter",
       "Properties": {
         "DestinationArn": {
           "Fn::GetAtt": [
-            "LogStream",
+            "VPCFlowLogStream",
             "Arn"
           ]
         },
@@ -2620,7 +2664,7 @@
           ]
         },
         "LogGroupName": {
-          "Ref": "FlowLogs"
+          "Ref": "CloudWatchLogGroupFlowLogs"
         },
         "RoleArn": {
           "Fn::GetAtt": [
@@ -2631,9 +2675,6 @@
       }
     },
     "VPCLambdaFlowLogUpload": {
-      "DependsOn": [
-        "LambdaIAMPolicy"
-      ],
       "Type": "AWS::Lambda::Function",
       "Properties": {
         "Handler": "index.handler",
@@ -2772,11 +2813,6 @@
         ]
       }
     },
-    "S3BucketCreateInspector": {
-      "DeletionPolicy": "Retain",
-      "Type": "AWS::S3::Bucket",
-      "Properties": {}
-    },
     "S3BucketPolicyCloudTrail": {
       "Type": "AWS::S3::BucketPolicy",
       "Properties": {
@@ -2794,14 +2830,25 @@
               },
               "Action": "s3:GetBucketAcl",
               "Resource": {
-                "Fn::Join": [
-                  "",
-                  [
-                    "arn:aws:s3:::",
-                    {
-                      "Ref": "S3BucketCloudTrail"
-                    }
-                  ]
+                  "Fn::GetAtt" : [
+                    "S3BucketCloudTrail",
+                    "Arn"
+                    ]
+              }
+            },
+            {
+              "Sid": "AWSCloudTrailCreateLogStream",
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "cloudtrail.amazonaws.com"
+              },
+              "Action": [
+                  "logs:CreateLogStream"
+              ],
+              "Resource": {
+                "Fn::GetAtt" : [
+                "CloudWatchLogGroupCloudTrail",
+                "Arn"
                 ]
               }
             },
@@ -2943,7 +2990,6 @@
       "Type": "String"
     },
     "RemoteAccessCIDR": {
-      "AllowedPattern": "^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\\/([0-9]|[1-2][0-9]|3[0-2]))$",
       "ConstraintDescription": "CIDR block parameter must be in the form x.x.x.x/x",
       "Default": "0.0.0.0/0",
       "Description": "CIDR from which access to bastion is to be permitted",
@@ -2967,8 +3013,8 @@
           "Parameters": [
             "AvailabilityZones",
             "VPCCIDR",
-            "PrivateSubnet1CIDR",
-            "PublicSubnet1CIDR",
+            "PrivateSubnetCIDR",
+            "PublicSubnetCIDR",
             "RemoteAccessCIDR"
           ]
         },
