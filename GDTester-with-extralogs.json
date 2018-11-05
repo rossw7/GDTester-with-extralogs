@@ -970,7 +970,7 @@
     },
     "CloudTrailCreateTrail": {
       "Type": "AWS::CloudTrail::Trail",
-      "DependsOn" : ["S3BucketPolicyCloudTrail"],
+      "DependsOn" : ["S3BucketCloudTrail","S3BucketPolicyCloudTrail", "FlowLogsToCloudWatchIAMRole", "CloudWatchLogGroupCloudTrail" ],
       "Properties": {
         "CloudWatchLogsLogGroupArn" : {
           "Fn::GetAtt": [
@@ -1288,6 +1288,101 @@
               "Effect": "Allow",
               "Resource": "*",
               "Action": "es:*"
+            }
+          ]
+        }
+      }
+     ]
+    }
+    },
+    "LambdaIAMPolicy": {
+      "Type": "AWS::IAM::Policy",
+      "Properties": {
+        "Roles": [
+          {
+            "Ref": "LambdaIAMRole"
+          }
+        ],
+        "PolicyName": "lambda",
+        "PolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Action": [
+                "lambda:InvokeFunction"
+              ],
+              "Resource": [
+                "*"
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "s3:PutObject"
+              ],
+              "Resource": [
+                {
+                  "Fn::Join": [
+                    "",
+                    [
+                      "arn:aws:s3:::",
+                      {
+                        "Ref": "S3BucketGuardDuty"
+                      },
+                      "/*"
+                    ]
+                  ]
+                }
+              ]
+            },
+            {
+              "Effect": "Allow",
+              "Action": [
+                "logs:CreateLogGroup",
+                "logs:CreateLogStream",
+                "logs:DescribeLogGroups",
+                "logs:DescribeLogStreams",
+                "logs:PutLogEvents"
+              ],
+              "Resource": [
+                  "arn:aws:logs:*:*:*"
+              ]
+            }
+          ]
+        }
+      }
+    },
+  "LambdaIAMRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": [
+                  "lambda.amazonaws.com"
+                ]
+              },
+              "Action": [
+                "sts:AssumeRole"
+              ]
+            }
+          ]
+        },
+        "Policies": [ {
+          "PolicyName": "AllowKinesis",
+          "PolicyDocument": { 
+            "Version" : "2012-10-17",
+            "Statement": [ {  
+              "Effect": "Allow",
+              "Resource": "*",
+              "Action": [
+                "kinesis:GetRecords",
+                "kinesis:GetShardIterator",
+                "kinesis:DescribeStream",
+                "kinesis:ListStreams"
+              ]
             }
           ]
         }
@@ -2783,7 +2878,8 @@
               "Effect": "Allow",
               "Principal": {
                 "Service": [
-                  "vpc-flow-logs.amazonaws.com"
+                  "vpc-flow-logs.amazonaws.com",
+                  "cloudtrail.amazonaws.com"
                 ]
               },
               "Action": "sts:AssumeRole"
@@ -2809,6 +2905,68 @@
                 }
               ]
             }
+          },
+          {
+            "PolicyName": "FullAccessCloudTrail",
+            "PolicyDocument": {
+              "Statement": [
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "sns:AddPermission",
+                  "sns:CreateTopic",
+                  "sns:DeleteTopic",
+                  "sns:ListTopics",
+                  "sns:SetTopicAttributes",
+                  "sns:GetTopicAttributes"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "s3:CreateBucket",
+                  "s3:DeleteBucket",
+                  "s3:GetObject",
+                  "s3:ListAllMyBuckets",
+                  "s3:PutBucketPolicy",
+                  "s3:GetBucketLocation",
+                  "s3:GetBucketPolicy"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": "cloudtrail:*",
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "logs:CreateLogGroup"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "iam:PassRole",
+                  "iam:ListRoles",
+                  "iam:GetRolePolicy",
+                  "iam:GetUser"
+                ],
+                "Resource": "*"
+              },
+              {
+                "Effect": "Allow",
+                "Action": [
+                  "kms:ListKeys",
+                  "kms:ListAliases"
+                ],
+                "Resource": "*"
+              }	
+            ]
+          }
           }
         ]
       }
@@ -2834,22 +2992,6 @@
                     "S3BucketCloudTrail",
                     "Arn"
                     ]
-              }
-            },
-            {
-              "Sid": "AWSCloudTrailCreateLogStream",
-              "Effect": "Allow",
-              "Principal": {
-                "Service": "cloudtrail.amazonaws.com"
-              },
-              "Action": [
-                  "logs:CreateLogStream"
-              ],
-              "Resource": {
-                "Fn::GetAtt" : [
-                "CloudWatchLogGroupCloudTrail",
-                "Arn"
-                ]
               }
             },
             {
